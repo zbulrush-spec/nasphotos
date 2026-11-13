@@ -1,0 +1,26 @@
+# 在极空间 Compose 中新建项目，选择项目保存位置。
+# 只需将照片 source 改为极空间上已有的照片目录；config 自动创建。
+services:
+  nasphotos:
+    image: ghcr.io/zbulrush-spec/nasphotos:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - type: bind
+        source: ./config
+        target: /config
+        bind:
+          create_host_path: true
+      - type: bind
+        source: ./photos # 改成你的 NAS 照片根目录
+        target: /media
+        bind:
+          create_host_path: false
+    mem_limit: 1536m
+    cpus: 1.5
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

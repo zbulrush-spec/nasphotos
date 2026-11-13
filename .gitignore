@@ -1,0 +1,10 @@
+data/
+media/
+.env
+__pycache__/
+.venv/
+dist/
+photos/
+.build-tools/
+config/
+.DS_Store
