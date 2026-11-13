@@ -30,7 +30,7 @@ COPY vendor vendor
 COPY scripts/container-entrypoint.py scripts/container-entrypoint.py
 VOLUME ["/config"]
 LABEL org.opencontainers.image.title="NAS Photos" \
-      org.opencontainers.image.source="https://gitee.com/zbulrush/nasphotos"
+      org.opencontainers.image.source="https://github.com/zbulrush-spec/nasphotos"
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/status', timeout=3)"
 CMD ["python","scripts/container-entrypoint.py"]
