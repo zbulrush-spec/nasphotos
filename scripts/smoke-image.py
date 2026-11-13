@@ -15,7 +15,7 @@ def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--config-target',choices=['/config','/data'],default='/config')
     args=parser.parse_args()
-    test_image=os.environ.get('TEST_IMAGE','nasphotos:0.1.2')
+    test_image=os.environ.get('TEST_IMAGE','nasphotos:0.2.0')
     with tempfile.TemporaryDirectory(prefix='nasphotos-smoke-',dir='/private/tmp' if pathlib.Path('/private/tmp').is_dir() else None) as directory:
         root=pathlib.Path(directory)
         (root/'data').mkdir(); (root/'photos').mkdir(); (root/'extra').mkdir()
@@ -25,7 +25,7 @@ def main():
         (root/'photos'/'sample.png').write_bytes(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC1sAAAAASUVORK5CYII='))
         (root/'extra'/'extra.png').write_bytes((root/'photos'/'sample.png').read_bytes())
         name='nasphotos-smoke-'+root.name.split('-')[-1]
-        command=['docker','run','-d','--name',name,'--memory','1536m','--cpus','1.5','-p','127.0.0.1::8080','-v',f'{root}/data:{args.config_target}','-v',f'{root}/photos:/media','-v',f'{root}/extra:/family_photos',test_image]
+        command=['docker','run','-d','--name',name,'--memory','2560m','--cpus','1.5','-p','127.0.0.1::8080','-v',f'{root}/data:{args.config_target}','-v',f'{root}/photos:/media','-v',f'{root}/extra:/family_photos',test_image]
         subprocess.run(command,check=True)
         try:
             mapping=subprocess.check_output(['docker','port',name,'8080/tcp'],text=True).strip().splitlines()[0]
@@ -73,6 +73,9 @@ def main():
             assert not (root/'photos'/'sample.png').exists()
             try:urllib.request.urlopen(base+link+'/file');raise AssertionError('Deleted share still accessible')
             except urllib.error.HTTPError as error:assert error.code==404
+            assert call('/api/media?trash=1')['items'][0]['id']==mid
+            assert call(f'/api/media/{mid}/thumb')[:2]==b'\xff\xd8'
+            assert call(f'/api/media/{mid}/preview')
             call(f'/api/media/{mid}/restore',{})
             assert (root/'photos'/'sample.png').exists()
             call('/api/shares/'+link.split('/')[-1],method='DELETE')

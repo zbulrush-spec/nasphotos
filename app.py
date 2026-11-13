@@ -1,4 +1,4 @@
-import os, sqlite3, secrets, threading, time, json, subprocess
+import os, sqlite3, secrets, threading, time, json, subprocess, math
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from functools import wraps
@@ -35,8 +35,15 @@ with db() as c:
     CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);
     CREATE TABLE IF NOT EXISTS media(id INTEGER PRIMARY KEY,path TEXT UNIQUE,kind TEXT,date TEXT,size INTEGER,mtime REAL,width INTEGER,height INTEGER,lat REAL,lon REAL,deleted REAL,trash TEXT,missing INTEGER DEFAULT 0);
     CREATE INDEX IF NOT EXISTS media_date ON media(deleted,missing,date);
+    CREATE TABLE IF NOT EXISTS people(id INTEGER PRIMARY KEY,name TEXT NOT NULL DEFAULT '',embedding TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS faces(id INTEGER PRIMARY KEY,media_id INTEGER REFERENCES media(id) ON DELETE CASCADE,person_id INTEGER REFERENCES people(id),box TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS faces_person ON faces(person_id,media_id);
+    CREATE INDEX IF NOT EXISTS faces_media ON faces(media_id);
+    CREATE TABLE IF NOT EXISTS face_scans(media_id INTEGER PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,mtime REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS shares(token TEXT PRIMARY KEY,media_id INTEGER REFERENCES media(id) ON DELETE CASCADE,expires REAL,password TEXT,download INTEGER DEFAULT 0);
     ''')
+    if not c.execute("SELECT 1 FROM settings WHERE key='recognition_api_key'").fetchone():
+        c.execute('INSERT INTO settings VALUES(?,?)',('recognition_api_key',secrets.token_urlsafe(32)))
 def setting(key):
     with db() as c:
         row=c.execute('SELECT value FROM settings WHERE key=?',(key,)).fetchone(); return row[0] if row else None
@@ -93,7 +100,7 @@ def validate_paths(values):
     return [p for p in paths if not any(p!=q and p.is_relative_to(q) for q in paths)]
 
 def start_scan_locked():
-    progress.update(running=True,phase='discovering',processed=0,discovered=0,errors=0,message='')
+    progress.update(running=True,phase='discovering',processed=0,discovered=0,errors=0,message='',task_id=secrets.token_hex(8))
     threading.Thread(target=scan,daemon=True).start()
 
 def rowmedia(mid):
@@ -165,6 +172,55 @@ def scan():
     except Exception as e: progress.update(phase='failed',message=str(e)); app.logger.exception('扫描失败')
     finally: progress['running']=False; lock.release()
 
+from recognition import FaceLibrary
+face_library=FaceLibrary(db,DATA,lock,lambda r: media_source(r),app.logger)
+
+@app.route('/api/recognition',methods=['GET','POST'])
+@auth
+def recognition():
+    if request.method=='POST':
+        if not lock.acquire(False): abort(409,description='扫描或文件操作正在进行，请稍后再试')
+        face_library.start()
+    return jsonify(face_library.status())
+
+@app.route('/api/recognition/key',methods=['GET','PUT'])
+@auth
+def recognition_key():
+    if request.method=='GET': return jsonify(configured=bool(setting('recognition_api_key')))
+    key=(request.get_json() or {}).get('key','')
+    if not isinstance(key,str) or not 32<=len(key)<=256: abort(400,description='密钥长度需在32到256个字符之间')
+    with db() as c: c.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',('recognition_api_key',key))
+    return jsonify(ok=True)
+
+@app.get('/api/people')
+@auth
+def people():
+    with db() as c:
+        rows=c.execute("SELECT p.id,p.name,count(DISTINCT m.id) count,min(f.id) cover FROM people p JOIN faces f ON f.person_id=p.id JOIN media m ON m.id=f.media_id WHERE m.deleted IS NULL AND m.missing=0 GROUP BY p.id ORDER BY count DESC,p.id").fetchall()
+    return jsonify([dict(r) for r in rows])
+
+@app.patch('/api/people/<int:pid>')
+@auth
+def rename_person(pid):
+    name=(request.get_json() or {}).get('name','')
+    if not isinstance(name,str) or len(name)>80: abort(400,description='人物名称最多80字')
+    with db() as c:
+        if not c.execute('SELECT id FROM people WHERE id=?',(pid,)).fetchone(): abort(404)
+        c.execute('UPDATE people SET name=? WHERE id=?',(name.strip(),pid))
+    return jsonify(ok=True)
+
+@app.get('/api/faces/<int:fid>/thumb')
+@auth
+def face_thumb(fid):
+    with db() as c: row=c.execute('SELECT m.*,f.box FROM faces f JOIN media m ON m.id=f.media_id WHERE f.id=? AND m.deleted IS NULL AND m.missing=0',(fid,)).fetchone()
+    if not row: abort(404)
+    from io import BytesIO
+    with Image.open(media_source(row)) as im:
+        im=ImageOps.exif_transpose(im); x,y,w,h=json.loads(row['box']); margin=max(w,h)*.2
+        im=im.crop((max(0,x-margin),max(0,y-margin),min(im.width,x+w+margin),min(im.height,y+h+margin))).convert('RGB')
+        im.thumbnail((200,200)); out=BytesIO();im.save(out,'JPEG');out.seek(0)
+    return send_file(out,mimetype='image/jpeg')
+
 @app.get('/')
 def index(): return render_template('index.html')
 @app.get('/api/status')
@@ -234,14 +290,65 @@ def scanning():
 @app.get('/api/media')
 @auth
 def listing():
-    trash=request.args.get('trash')=='1'; offset=max(0,int(request.args.get('offset',0))); limit=min(200,max(1,int(request.args.get('limit',120))))
-    where='deleted IS NOT NULL' if trash else 'deleted IS NULL AND missing=0'
+    trash=request.args.get('trash')=='1'
+    try:
+        offset=max(0,int(request.args.get('offset',0))); limit=min(200,max(1,int(request.args.get('limit',120))))
+    except ValueError: abort(400,description='分页参数不正确')
+    where=['deleted IS NOT NULL' if trash else 'deleted IS NULL AND missing=0']; params=[]
+    if request.args.get('kind') in ('image','video'):
+        where.append('kind=?'); params.append(request.args['kind'])
+    if request.args.get('bounds'):
+        south,west,north,east=parse_bounds(request.args['bounds'])
+        where.append('lat BETWEEN ? AND ?'); params.extend([south,north])
+        where.append('(lon>=? OR lon<=?)' if west>east else 'lon BETWEEN ? AND ?'); params.extend([west,east])
+    if request.args.get('person'):
+        try: person=int(request.args['person'])
+        except ValueError: abort(400)
+        where.append('id IN (SELECT media_id FROM faces WHERE person_id=?)'); params.append(person)
+    clause=' AND '.join(where); order='deleted DESC,id DESC' if trash else 'date DESC,id DESC'
     with db() as c:
-        total=c.execute('SELECT count(*) FROM media WHERE '+where).fetchone()[0]
-        rows=c.execute('SELECT * FROM media WHERE '+where+' ORDER BY date DESC,id DESC LIMIT ? OFFSET ?',(limit,offset)).fetchall()
+        total=c.execute('SELECT count(*) FROM media WHERE '+clause,params).fetchone()[0]
+        rows=c.execute('SELECT * FROM media WHERE '+clause+' ORDER BY '+order+' LIMIT ? OFFSET ?',params+[limit,offset]).fetchall()
     return jsonify(total=total,items=[dict(r) for r in rows])
+
+def parse_bounds(value):
+    try:
+        south,west,north,east=map(float,value.split(','))
+        if not all(math.isfinite(v) for v in (south,west,north,east)) or not -90<=south<=north<=90 or not -180<=west<=180 or not -180<=east<=180: raise ValueError()
+        return south,west,north,east
+    except ValueError: abort(400,description='地图范围不正确')
+
+@app.get('/api/places')
+@auth
+def places():
+    try: zoom=min(19,max(0,int(request.args.get('zoom',2))))
+    except ValueError: abort(400)
+    # World-aligned Mercator cells stay stable while panning and split as zoom increases.
+    cells=2**max(0,zoom-1); groups={}
+    where='deleted IS NULL AND missing=0 AND lat BETWEEN -90 AND 90 AND lon BETWEEN -180 AND 180'
+    with db() as c:
+        extent=c.execute('SELECT count(*),min(lat),min(lon),max(lat),max(lon) FROM media WHERE '+where).fetchone()
+        params=[]
+        if request.args.get('bounds'):
+            south,west,north,east=parse_bounds(request.args['bounds'])
+            where+=' AND lat BETWEEN ? AND ? AND '+('(lon>=? OR lon<=?)' if west>east else 'lon BETWEEN ? AND ?')
+            params=[south,north,west,east]
+        rows=c.execute('SELECT id,lat,lon FROM media WHERE '+where+' ORDER BY id',params).fetchall()
+    for r in rows:
+        lat=max(-85.05112878,min(85.05112878,r['lat'])); x=min(cells-1,int((r['lon']+180)/360*cells))
+        y=min(cells-1,max(0,int((1-math.asinh(math.tan(math.radians(lat)))/math.pi)/2*cells)))
+        g=groups.setdefault((x,y),{'count':0,'lat':0,'lon':0,'id':r['id'],'bounds':[90,180,-90,-180]})
+        g['count']+=1; g['lat']+=r['lat']; g['lon']+=r['lon']
+        box=g['bounds'];box[0]=min(box[0],r['lat']);box[1]=min(box[1],r['lon']);box[2]=max(box[2],r['lat']);box[3]=max(box[3],r['lon'])
+    for g in groups.values():
+        g['lat']/=g['count'];g['lon']/=g['count'];g['leaf']=zoom>=18 or g['bounds'][0:2]==g['bounds'][2:4]
+    return jsonify(total=extent[0],bounds=list(extent)[1:] if extent[0] else None,clusters=list(groups.values()))
+
+def media_source(r):
+    return safe(r['trash'],trash=True) if r['deleted'] else safe(r['path'])
+
 def browser_preview(r):
-    source=safe(r['path'])
+    source=media_source(r)
     if source.suffix.lower() not in {'.heic','.heif','.tif','.tiff','.bmp'}: return source
     dest=DATA/'previews'/f"{r['id']}.jpg"
     def current(): return dest.exists() and dest.stat().st_mtime>=source.stat().st_mtime
@@ -266,12 +373,12 @@ def browser_preview(r):
 @auth
 def content(mid,variant):
     r=rowmedia(mid)
-    if r['deleted'] or r['missing']: abort(404)
+    if r['missing'] and not r['deleted']: abort(404)
     if variant=='thumb':
         p=DATA/'thumbs'/f'{mid}.jpg'
         if not p.exists(): return send_file('static/video.svg',mimetype='image/svg+xml')
     elif variant=='preview': p=browser_preview(r)
-    elif variant in ('original','download'): p=safe(r['path'])
+    elif variant in ('original','download'): p=media_source(r)
     else: abort(404)
     return send_file(p,as_attachment=variant=='download',download_name=Path(r['path']).name if variant=='download' else None,conditional=True)
 @app.post('/api/media/<int:mid>/trash')

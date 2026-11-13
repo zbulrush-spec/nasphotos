@@ -1,5 +1,5 @@
 # 本地从源码构建；安装镜像时只需使用 compose.yaml。
 services:
   nasphotos:
-    image: nasphotos:0.1.2
+    image: nasphotos:0.2.0
     build: .

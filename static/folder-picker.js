@@ -1,5 +1,5 @@
-/* Keep binding errors inside the modal: a toast behind a dialog is invisible. */
-function setupLibraryPicker({api,onScanStarted}) {
+/* Directory management lives in the library settings page. */
+function setupLibraryPicker({api,onSaved}) {
   const get=id=>document.getElementById(id);
   const dialog=get('config'), chosen=new Set();
   let current='',busy=false;
@@ -27,7 +27,7 @@ function setupLibraryPicker({api,onScanStarted}) {
   }
   async function open(){
     if(busy)return;
-    if(!dialog.open)dialog.showModal();error('');get('saveFolder').disabled=true;
+    error('');get('saveFolder').disabled=true;
     try{
       const [lib,available]=await Promise.all([api('/api/library'),api('/api/roots')]);
       chosen.clear();lib.paths.forEach(path=>chosen.add(path));selection();get('folderRoots').replaceChildren();
@@ -35,15 +35,14 @@ function setupLibraryPicker({api,onScanStarted}) {
       await browse(lib.paths[0]||(available.roots.find(root=>root.mounted)||available.roots[0]).path);
     }catch(e){error(e.message)}
   }
-  dialog.addEventListener('cancel',event=>{event.preventDefault()});
   get('saveFolder').onclick=async()=>{
     if(busy||!chosen.size)return;
-    busy=true;error('');selection();syncChecks();get('saveFolder').textContent='正在保存并启动扫描…';
+    busy=true;error('');selection();syncChecks();get('saveFolder').textContent='正在保存…';
     try{
-      await api('/api/library','POST',{paths:[...chosen],scan:true});
-      dialog.close();await onScanStarted();
+      await api('/api/library','POST',{paths:[...chosen]});
+      await onSaved();
     }catch(e){error(e.message)}
-    finally{busy=false;selection();syncChecks();get('saveFolder').textContent='保存所选目录并扫描'}
+    finally{busy=false;selection();syncChecks();get('saveFolder').textContent='保存所选目录'}
   };
   return {open};
 }

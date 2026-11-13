@@ -13,6 +13,6 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 docker info >/dev/null
 mkdir -p dist
-docker buildx build --platform "$platform" --load -t nasphotos:0.1.2 .
-docker image save -o "dist/nasphotos-0.1.2-${arch}.tar" nasphotos:0.1.2
-echo "镜像已生成：dist/nasphotos-0.1.2-${arch}.tar"
+docker buildx build --platform "$platform" --load -t nasphotos:0.2.0 .
+docker image save -o "dist/nasphotos-0.2.0-${arch}.tar" nasphotos:0.2.0
+echo "镜像已生成：dist/nasphotos-0.2.0-${arch}.tar"

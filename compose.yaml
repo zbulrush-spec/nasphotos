@@ -2,7 +2,7 @@
 # 只需将照片 source 改为极空间上已有的照片目录；config 自动创建。
 services:
   nasphotos:
-    image: ghcr.io/zbulrush-spec/nasphotos:latest
+    image: crpi-44sb4bvpcm655d55.cn-beijing.personal.cr.aliyuncs.com/zbulrush/nasphotos:latest
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -17,7 +17,7 @@ services:
         target: /media
         bind:
           create_host_path: false
-    mem_limit: 1536m
+    mem_limit: 2560m
     cpus: 1.5
     logging:
       driver: json-file

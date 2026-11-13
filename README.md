@@ -1,14 +1,14 @@
 # 拾光 NAS Photos
 
-适合家庭 NAS 的轻量相册。支持照片和视频时间线、缩略图、HEIC 大图预览、多目录绑定、GPS 信息、回收站和对外分享。按 4GB 内存设备设计，扫描串行执行，无需独立显卡。
+适合家庭 NAS 的轻量相册。支持照片和视频时间线、自动翻页、HEIC 大图预览、多目录管理、地点聚合地图、本地人脸识别、回收站和对外分享。按 4GB 内存设备设计，扫描串行执行，无需独立显卡。
 
 项目：https://github.com/zbulrush-spec/nasphotos
 
 ## 从镜像仓库安装（推荐 Compose）
 
-镜像地址：`ghcr.io/zbulrush-spec/nasphotos:latest`。同一地址包含 AMD64 和 ARM64，Docker 自动选择架构，极空间 Z2Pro / RK3568 使用 ARM64。
+镜像地址：`crpi-44sb4bvpcm655d55.cn-beijing.personal.cr.aliyuncs.com/zbulrush/nasphotos:latest`。镜像包含 AMD64 和 ARM64，Docker 自动选择架构，极空间 Z2Pro / RK3568 使用 ARM64。
 
-镜像由 GitHub Actions 在测试通过后发布。首次发布的 GHCR 包默认可能是私有的，仓库管理员需要在 GitHub 的 Packages → nasphotos → Package settings 中将可见性设为 Public，然后验证匿名拉取。
+镜像托管在阿里云容器镜像服务（ACR）。需要登录 ACR 才能推送镜像；公开拉取请在 ACR 将仓库设为公开。
 
 在极空间 Docker 的 Compose 页面新建项目，选择项目保存位置，复制仓库中的 [compose.yaml](compose.yaml)。**只需修改照片 `source` 为 NAS 上已有的照片根目录**，启动项目。
 
@@ -17,20 +17,20 @@
 - 不需要 `.env`，不需要填写环境变量，不需要手动新建 config 文件夹。
 - 照片挂载路径不存在时启动会报错，不会自动创建一个空照片目录。
 
-打开 `http://NAS地址:8080`，设置管理员密码，在网页勾选一个或多个照片目录并扫描。照片目录直接包含图片时，勾选“选择当前目录”。
+打开 `http://NAS地址:8080`，设置管理员密码，在“图库设置”页面勾选一个或多个照片目录，保存后点击“扫描图库”。照片目录直接包含图片时，勾选“选择当前目录”。
 
 照片必须先由 Docker 授权挂载；网页只能选择挂载范围内的目录，不会自行访问 NAS 其他文件夹。照片目录需要读写权限以实现回收站。
 
 ### 在本地镜像页面手动创建容器
 
-也可自定义拉取 `ghcr.io/zbulrush-spec/nasphotos:latest`，再添加到容器：
+也可自定义拉取 `crpi-44sb4bvpcm655d55.cn-beijing.personal.cr.aliyuncs.com/zbulrush/nasphotos:latest`，再添加到容器：
 
 | 项目 | 配置 |
 | --- | --- |
 | 端口 | 本地 8080 → 容器 8080 |
 | 照片 | NAS 照片根目录 → `/media`，读写 |
 | 配置（建议显式保存） | 应用配置目录 → `/config`，读写 |
-| 内存 | 建议 1536MB |
+| 内存 | 建议 2560MB |
 | 重启 | 自动重启 |
 | 环境变量 | 不需要 |
 
@@ -71,13 +71,26 @@ bash scripts/build-image.sh linux/arm64
 
 ## 数据和功能
 
-- 登录密码以哈希保存，配置保存在 SQLite 中；列表分页加载缩略图。
+- 登录密码以哈希保存，配置保存在 SQLite 中；下拉时间线会自动加载下一页。
+- 照片详情先显示缩略图，原图加载完成后替换；视频按实际缓冲进度显示加载条。
+- 地点页使用内置 Leaflet 组件和 OpenStreetMap 在线底图，按缩放级别聚合照片数量，放大到最小范围后可查看区域内全部照片。
+- “图库设置”为独立页面，管理多目录、手动扫描和人脸识别；扫描完成提示可以关闭。
 - HEIC/HEIF 由本机解码生成 JPEG 预览，原文件保持原样，下载仍为原格式。
 - 多目录递归扫描，已有缩略图和未变化文件可跳过处理；进度显示发现、处理和失败数量。
 - 日期优先读取拍摄元数据，没有时使用文件修改时间；GPS 写入数据库。
-- 删除会实际将源文件移动到父目录中的 `.nasphotos-trash`，支持恢复，满30天永久删除。每小时检查，容器启动时补执行。
+- 删除会实际将源文件移动到父目录中的 `.nasphotos-trash`，支持恢复，按删除时间排列，满30天永久删除。每小时检查，容器启动时补执行。
 - 分享链接支持密码、有效期、撤销和下载开关；被删除的照片立即停止分享。下载开关不防复制；原文件可能包含 GPS。
-- 单管理员，单扫描任务，一个 Gunicorn worker。配置和缓存保存在同一持久化目录，原片保存在照片挂载中。
+- 最近删除保留缩略图和详情预览，支持从详情恢复到原目录；已删除项目不能创建分享。
+- 人物页按人脸分组浏览照片并支持命名；图库设置中点击“识别图库人物”运行增量识别。识别过程和照片扫描串行执行。
+- 单管理员，单扫描或识别任务，一个 Gunicorn worker。配置和缓存保存在同一持久化目录，原片保存在照片挂载中。
+
+## 本地人脸识别
+
+同一个 Docker 内集成 [mt-photos-insightface-unofficial](https://github.com/dev-fox-101/mt-photos-insightface-unofficial) 服务和 InsightFace CPU 推理。构建阶段下载并校验 buffalo_l 的全部五个 ONNX 文件，直接打包进镜像；容器启动和首次识别无需再下载模型。服务仅监听容器内 `127.0.0.1:8066`，对外仍只开放 8080。
+
+模型按需加载，连续空闲五分钟后释放；建议为容器分配 2560MB 内存。识别照片和人脸向量保存在本机，不上传到外部服务。新照片扫描完成后，在图库设置中运行识别，未变化的照片会跳过。识别目前处理静态照片，人物分组可能需要人工确认；视频人脸识别尚未包含。
+
+预训练 buffalo_l 模型遵循上游的非商业研究用途限制，详见 [第三方说明](vendor/mt-photos-insightface/NOTICE.md)。模型文件存放在镜像内，不提交大体积二进制到 Git 仓库。
 
 ## 外网访问
 
@@ -94,21 +107,24 @@ python app.py
 python -m unittest discover -s tests -v
 node --check static/app.js
 node --check static/folder-picker.js
+# 可选：pip install playwright && playwright install chromium
+python scripts/test-browser.py # 无截图浏览器交互测试
 ```
 
 本地默认使用 `./data`。开发或特殊部署可用 `DATA_DIR`、`MEDIA_ROOT` 指定目录，普通 NAS 安装无需设置。FFmpeg/FFprobe 在镜像中已包含，本地开发需另外安装。
 
-Docker 端到端测试：
+Docker 端到端测试（人脸测试需要准备一张包含清晰人脸的本地照片）：
 
 ```bash
-TEST_IMAGE=nasphotos:0.1.2 python scripts/smoke-image.py --config-target /config
-TEST_IMAGE=nasphotos:0.1.2 python scripts/smoke-image.py --config-target /data
+TEST_IMAGE=nasphotos:0.2.0 python scripts/smoke-image.py --config-target /config
+TEST_IMAGE=nasphotos:0.2.0 python scripts/smoke-image.py --config-target /data
+python scripts/test-recognition.py --image nasphotos:0.2.0 --sample /path/to/face.jpg
 ```
 
-GitHub Actions 自动运行 Python/JS/Compose 检查、容器新配置和旧路径兼容测试，再发布多架构镜像；发布 `v*` Git 标签时生成对应版本镜像标签。只使用 Actions 自动提供的 `GITHUB_TOKEN`，无需手动配置发布密钥。
+Docker 镜像由 ACR 托管。推送多架构镜像前，先用 ACR 页面提供的访问凭证登录，然后运行 `bash scripts/publish-acr.sh`。脚本会发布 `latest` 标签；登录密码只在终端交互输入，不保存在代码库中。
 
 ## 当前版本边界
 
-这是核心流程预览版，尚未实现内嵌地图、人脸识别、视频转码、多用户权限、独立多图库、相册分享、Live Photo 配对、RAW 预览、手机备份、定时扫描和持久化任务恢复。地点目前为列表和外部地图链接，视频直接播放取决于浏览器编码支持。
+这是核心流程预览版，尚未实现视频转码、多用户权限、独立多图库、相册分享、Live Photo 配对、RAW 预览、手机备份、定时扫描和持久化任务恢复。地点底图需要联网；视频直接播放取决于浏览器编码支持。
 
-时区尚未完整统一；文件操作尚无可恢复的崩溃日志；公网暴力登录封禁和多因素认证尚未实现。请保留原片独立备份。模型、人像功能后续计划通过可选本地识别服务接入。开发测试使用生成的媒体文件，尚未在用户极空间实机上验证所有功能。
+时区尚未完整统一；文件操作尚无可恢复的崩溃日志；公网暴力登录封禁和多因素认证尚未实现。请保留原片独立备份。人脸识别采用容器内本地服务。开发测试使用生成的媒体文件，尚未在用户极空间实机上验证所有功能。

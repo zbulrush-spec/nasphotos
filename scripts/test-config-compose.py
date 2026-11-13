@@ -11,12 +11,12 @@ import urllib.request
 
 
 def main():
-    image=os.environ.get('TEST_IMAGE','nasphotos:0.1.2')
+    image=os.environ.get('TEST_IMAGE','nasphotos:0.2.0')
     with tempfile.TemporaryDirectory(prefix='nasphotos-compose-',dir='/private/tmp' if Path('/private/tmp').exists() else None) as temp:
         root=Path(temp)
         (root/'photos').mkdir()
         content=(Path(__file__).resolve().parents[1]/'compose.yaml').read_text()
-        content=content.replace('ghcr.io/zbulrush-spec/nasphotos:latest',image).replace('"8080:8080"','"127.0.0.1::8080"')
+        content=content.replace('crpi-44sb4bvpcm655d55.cn-beijing.personal.cr.aliyuncs.com/zbulrush/nasphotos:latest',image).replace('"8080:8080"','"127.0.0.1::8080"')
         file=root/'compose.yaml';file.write_text(content)
         command=['docker','compose','-p','nasphotos-config-'+root.name.split('-')[-1],'-f',str(file)]
         assert not (root/'config').exists()
