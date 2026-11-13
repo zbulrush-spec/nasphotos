@@ -46,6 +46,8 @@ def main():
             assert (config/'secret').read_bytes()==before
             print('PASS: Compose creates config, initializes SQLite/cache, and preserves login after container recreation')
         finally:
-            subprocess.run(command+['down'],check=False)
+            subprocess.run(command+['down','--volumes'],check=False)
+            # Only this script's generated temporary project is mounted here.
+            subprocess.run(['docker','run','--rm','--network','none','--read-only','--user','0','--entrypoint','chown','-v',f'{root}:/test-data',image,'-R',f'{os.getuid()}:{os.getgid()}','/test-data'],check=True)
 
 if __name__=='__main__':main()

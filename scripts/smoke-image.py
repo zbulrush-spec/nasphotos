@@ -115,6 +115,9 @@ def main():
             print('PASS: Docker HTTP login, scan, thumbnail, FFmpeg video cover, video range streaming, share, trash, restore multi-directory/mount binding, HEIC JPEG preview/original download, and restart persistence')
         finally:
             subprocess.run(['docker','logs','--tail','15',name],check=False)
-            subprocess.run(['docker','rm','-f',name],check=False,stdout=subprocess.DEVNULL)
+            subprocess.run(['docker','rm','-f','-v',name],check=False,stdout=subprocess.DEVNULL)
+            # Docker runs as root on Linux; return only disposable fixture files
+            # to the host test user before TemporaryDirectory removes them.
+            subprocess.run(['docker','run','--rm','--network','none','--read-only','--user','0','--entrypoint','chown','-v',f'{root}:/test-data',test_image,'-R',f'{os.getuid()}:{os.getgid()}','/test-data'],check=True)
 
 if __name__=='__main__':main()
