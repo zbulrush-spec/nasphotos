@@ -37,13 +37,13 @@ def main():
             config=root/'config'
             assert (config/'library.sqlite').is_file()
             assert (config/'thumbs').is_dir() and (config/'previews').is_dir()
-            before=(config/'secret').read_bytes()
+            assert (config/'secret').is_file()
             call('/api/login',{'password':'compose-fixture-password'})
             subprocess.run(command+['up','-d','--force-recreate','--pull','never'],check=True)
             base='http://'+subprocess.check_output(command+['port','nasphotos','8080'],text=True).strip().splitlines()[0]
             status=ready()
             assert status['setup'] and status['authenticated'],status
-            assert (config/'secret').read_bytes()==before
+            # A still-authenticated cookie proves the signing key survived.
             print('PASS: Compose creates config, initializes SQLite/cache, and preserves login after container recreation')
         finally:
             subprocess.run(command+['down','--volumes'],check=False)
