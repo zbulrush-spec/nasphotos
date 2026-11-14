@@ -37,7 +37,7 @@ window.addEventListener('scroll',maybeLoadMore,{passive:true});$('#retryLoad').o
 
 async function showMap(){
   if(typeof L==='undefined'){$('#notice').textContent='地图组件加载失败，请刷新页面重试。';return}
-  if(!map){map=L.map('map',{maxZoom:19}).setView([30,105],3);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'}).addTo(map);mapMarkers=L.layerGroup().addTo(map);map.on('moveend',()=>refreshMap().catch(e=>toast(e.message)))}
+  if(!map){map=L.map('map',{maxZoom:19}).setView([30,105],3);L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'}).addTo(map);mapMarkers=L.layerGroup().addTo(map);map.on('moveend',()=>refreshMap().catch(e=>toast(e.message)))}
   map.invalidateSize();await refreshMap(true);
 }
 async function refreshMap(fit=false){
